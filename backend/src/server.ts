@@ -12,7 +12,8 @@ import dashboardRoutes from './routes/dashboard';
 const app = express();
 
 // Middleware
-app.use(cors({ origin: '*' }));
+const allowedOrigin = process.env.FRONTEND_URL || '*';
+app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(express.json());
 
 // Health check
