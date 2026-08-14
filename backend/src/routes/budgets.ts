@@ -1,160 +1,95 @@
-import { Router, Response } from 'express';
+import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
+import { asyncHandler } from '../middleware/errorHandler';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 router.use(authMiddleware);
 
-const upsertBudgetSchema = z.object({
-  amount: z.number().positive('Amount must be positive'),
+const budgetSchema = z.object({
+  amount: z.number().positive('Valor deve ser maior que zero'),
   month: z.number().int().min(1).max(12),
   year: z.number().int().min(2000).max(2100),
-  categoryId: z.string().min(1, 'Category is required'),
+  categoryId: z.string().min(1),
 });
 
-// GET /api/budgets?month=&year=
-router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const month = parseInt(req.query.month as string);
-    const year = parseInt(req.query.year as string);
-
-    if (!month || !year || month < 1 || month > 12) {
-      res.status(400).json({ error: 'Valid month (1-12) and year are required' });
-      return;
-    }
-
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+router.get(
+  '/',
+  asyncHandler(async (req: AuthRequest, res) => {
+    const month = req.query.month ? Number(req.query.month) : new Date().getMonth() + 1;
+    const year = req.query.year ? Number(req.query.year) : new Date().getFullYear();
 
     const budgets = await prisma.budget.findMany({
       where: { userId: req.userId, month, year },
-      include: {
-        category: {
-          select: { id: true, name: true, type: true, color: true, icon: true },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
+      include: { category: true },
+      orderBy: { category: { name: 'asc' } },
     });
 
-    // Calculate spent amount for each budget's category in the given month/year
     const budgetsWithSpent = await Promise.all(
       budgets.map(async (budget) => {
+        const start = new Date(year, month - 1, 1);
+        const end = new Date(year, month, 1);
         const spentResult = await prisma.transaction.aggregate({
           where: {
             userId: req.userId,
             categoryId: budget.categoryId,
             type: 'EXPENSE',
-            date: { gte: startDate, lte: endDate },
+            date: { gte: start, lt: end },
           },
           _sum: { amount: true },
         });
-
-        const spent = Number(spentResult._sum.amount ?? 0);
-        const budgetAmount = Number(budget.amount);
-
-        return {
-          id: budget.id,
-          amount: budgetAmount,
-          month: budget.month,
-          year: budget.year,
-          userId: budget.userId,
-          categoryId: budget.categoryId,
-          createdAt: budget.createdAt,
-          updatedAt: budget.updatedAt,
-          category: budget.category,
-          spent,
-          remaining: budgetAmount - spent,
-          percentUsed: budgetAmount > 0 ? Math.round((spent / budgetAmount) * 100) : 0,
-        };
+        return { ...budget, spent: spentResult._sum.amount || 0 };
       })
     );
 
-    res.json({ budgets: budgetsWithSpent, month, year });
-  } catch (err) {
-    console.error('Get budgets error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+    return res.json({ budgets: budgetsWithSpent });
+  })
+);
 
-// POST /api/budgets — upsert budget for category+month+year
-router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const validation = upsertBudgetSchema.safeParse(req.body);
-    if (!validation.success) {
-      res.status(400).json({ error: validation.error.errors[0].message });
-      return;
-    }
+router.post(
+  '/',
+  asyncHandler(async (req: AuthRequest, res) => {
+    const data = budgetSchema.parse(req.body);
 
-    const { amount, month, year, categoryId } = validation.data;
-
-    // Verify category belongs to user
     const category = await prisma.category.findFirst({
-      where: { id: categoryId, userId: req.userId },
+      where: { id: data.categoryId, userId: req.userId },
     });
     if (!category) {
-      res.status(404).json({ error: 'Category not found' });
-      return;
+      return res.status(404).json({ error: 'Categoria não encontrada' });
     }
 
-    // Upsert: update if exists, create if not
     const budget = await prisma.budget.upsert({
       where: {
         userId_categoryId_month_year: {
           userId: req.userId!,
-          categoryId,
-          month,
-          year,
+          categoryId: data.categoryId,
+          month: data.month,
+          year: data.year,
         },
       },
-      update: { amount },
-      create: {
-        amount,
-        month,
-        year,
-        userId: req.userId!,
-        categoryId,
-      },
-      include: {
-        category: {
-          select: { id: true, name: true, type: true, color: true, icon: true },
-        },
-      },
+      update: { amount: data.amount },
+      create: { ...data, userId: req.userId! },
+      include: { category: true },
     });
 
-    res.status(201).json({
-      budget: {
-        ...budget,
-        amount: Number(budget.amount),
-      },
-    });
-  } catch (err) {
-    console.error('Upsert budget error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+    return res.status(201).json({ budget });
+  })
+);
 
-// DELETE /api/budgets/:id
-router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-
+router.delete(
+  '/:id',
+  asyncHandler(async (req: AuthRequest, res) => {
     const existing = await prisma.budget.findFirst({
-      where: { id, userId: req.userId },
+      where: { id: req.params.id, userId: req.userId },
     });
-
     if (!existing) {
-      res.status(404).json({ error: 'Budget not found' });
-      return;
+      return res.status(404).json({ error: 'Orçamento não encontrado' });
     }
 
-    await prisma.budget.delete({ where: { id } });
-
-    res.json({ message: 'Budget deleted successfully' });
-  } catch (err) {
-    console.error('Delete budget error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+    await prisma.budget.delete({ where: { id: req.params.id } });
+    return res.status(204).send();
+  })
+);
 
 export default router;

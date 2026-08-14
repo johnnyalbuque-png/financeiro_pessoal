@@ -1,117 +1,53 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider, useAuth } from './contexts/AuthContext'
-import Layout from './components/Layout'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Transactions from './pages/Transactions'
-import Accounts from './pages/Accounts'
-import Categories from './pages/Categories'
-import Budgets from './pages/Budgets'
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { useAuth } from './contexts/AuthContext';
+import { Layout } from './components/Layout';
+import { Login } from './pages/Login';
+import { Register } from './pages/Register';
+import { Dashboard } from './pages/Dashboard';
+import { Accounts } from './pages/Accounts';
+import { Transactions } from './pages/Transactions';
+import { Categories } from './pages/Categories';
+import { Budgets } from './pages/Budgets';
 
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { user, loading } = useAuth()
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
-          <p className="text-gray-500 text-sm">Carregando...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace />
-  }
-
-  return <Layout>{children}</Layout>
+function PrivateRoute({ children }: { children: JSX.Element }) {
+  const { user, loading } = useAuth();
+  if (loading) return <FullScreenLoader />;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
 }
 
-const PublicRoute = ({ children }: { children: React.ReactNode }) => {
-  const { user, loading } = useAuth()
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="w-10 h-10 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
-
-  if (user) {
-    return <Navigate to="/dashboard" replace />
-  }
-
-  return <>{children}</>
+function FullScreenLoader() {
+  return (
+    <div className="h-screen flex items-center justify-center bg-slate-50">
+      <div className="h-10 w-10 rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin" />
+    </div>
+  );
 }
 
-const AppRoutes = () => {
+export default function App() {
+  const { user, loading } = useAuth();
+
+  if (loading) return <FullScreenLoader />;
+
   return (
     <Routes>
+      <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/registrar" element={user ? <Navigate to="/" replace /> : <Register />} />
       <Route
-        path="/login"
+        path="/"
         element={
-          <PublicRoute>
-            <Login />
-          </PublicRoute>
+          <PrivateRoute>
+            <Layout />
+          </PrivateRoute>
         }
-      />
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/transactions"
-        element={
-          <ProtectedRoute>
-            <Transactions />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/accounts"
-        element={
-          <ProtectedRoute>
-            <Accounts />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/categories"
-        element={
-          <ProtectedRoute>
-            <Categories />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/budgets"
-        element={
-          <ProtectedRoute>
-            <Budgets />
-          </ProtectedRoute>
-        }
-      />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      >
+        <Route index element={<Dashboard />} />
+        <Route path="contas" element={<Accounts />} />
+        <Route path="transacoes" element={<Transactions />} />
+        <Route path="categorias" element={<Categories />} />
+        <Route path="orcamentos" element={<Budgets />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
-  )
+  );
 }
-
-const App = () => {
-  return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
-  )
-}
-
-export default App

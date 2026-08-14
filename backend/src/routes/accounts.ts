@@ -1,119 +1,99 @@
-import { Router, Response } from 'express';
+import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
+import { asyncHandler } from '../middleware/errorHandler';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 router.use(authMiddleware);
 
-const ACCOUNT_TYPES = ['CHECKING', 'SAVINGS', 'CREDIT_CARD', 'INVESTMENT', 'CASH'] as const;
-
-const createAccountSchema = z.object({
-  name: z.string().min(1, 'Nome é obrigatório').max(100),
-  type: z.enum(ACCOUNT_TYPES),
-  balance: z.number({ required_error: 'Saldo inicial é obrigatório' }),
-  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Cor inválida (use hex, ex: #FF0000)'),
-  icon: z.string().min(1, 'Ícone é obrigatório'),
+const accountSchema = z.object({
+  name: z.string().min(1, 'Nome é obrigatório'),
+  type: z.enum(['CHECKING', 'SAVINGS', 'CREDIT_CARD', 'INVESTMENT', 'CASH']),
+  balance: z.number().default(0),
+  color: z.string().min(1),
+  icon: z.string().min(1),
 });
 
-const updateAccountSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  type: z.enum(ACCOUNT_TYPES).optional(),
-  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
-  icon: z.string().min(1).optional(),
-});
-
-// GET /api/accounts
-router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
+router.get(
+  '/',
+  asyncHandler(async (req: AuthRequest, res) => {
     const accounts = await prisma.account.findMany({
       where: { userId: req.userId },
       orderBy: { createdAt: 'asc' },
     });
 
-    const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
+    const now = new Date();
+    const accountsWithBalance = await Promise.all(
+      accounts.map(async (account) => {
+        const [income, expense] = await Promise.all([
+          prisma.transaction.aggregate({
+            where: { accountId: account.id, type: 'INCOME', date: { lte: now } },
+            _sum: { amount: true },
+          }),
+          prisma.transaction.aggregate({
+            where: { accountId: account.id, type: 'EXPENSE', date: { lte: now } },
+            _sum: { amount: true },
+          }),
+        ]);
+        const currentBalance = account.balance + (income._sum.amount || 0) - (expense._sum.amount || 0);
+        return { ...account, currentBalance };
+      })
+    );
 
-    res.json({ accounts, totalBalance });
-  } catch (err) {
-    console.error('Get accounts error:', err);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
+    return res.json({ accounts: accountsWithBalance });
+  })
+);
 
-// POST /api/accounts
-router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const validation = createAccountSchema.safeParse(req.body);
-    if (!validation.success) {
-      res.status(400).json({ error: validation.error.errors[0].message });
-      return;
-    }
-
-    const { name, type, balance, color, icon } = validation.data;
-
+router.post(
+  '/',
+  asyncHandler(async (req: AuthRequest, res) => {
+    const data = accountSchema.parse(req.body);
     const account = await prisma.account.create({
-      data: { name, type, balance, color, icon, userId: req.userId! },
+      data: { ...data, userId: req.userId! },
     });
+    return res.status(201).json({ account });
+  })
+);
 
-    res.status(201).json({ account });
-  } catch (err) {
-    console.error('Create account error:', err);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
+router.put(
+  '/:id',
+  asyncHandler(async (req: AuthRequest, res) => {
+    const data = accountSchema.partial().parse(req.body);
 
-// PUT /api/accounts/:id
-router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-
-    const existing = await prisma.account.findFirst({ where: { id, userId: req.userId } });
+    const existing = await prisma.account.findFirst({
+      where: { id: req.params.id, userId: req.userId },
+    });
     if (!existing) {
-      res.status(404).json({ error: 'Conta não encontrada' });
-      return;
+      return res.status(404).json({ error: 'Conta não encontrada' });
     }
 
-    const validation = updateAccountSchema.safeParse(req.body);
-    if (!validation.success) {
-      res.status(400).json({ error: validation.error.errors[0].message });
-      return;
-    }
+    const account = await prisma.account.update({
+      where: { id: req.params.id },
+      data,
+    });
+    return res.json({ account });
+  })
+);
 
-    const account = await prisma.account.update({ where: { id }, data: validation.data });
-
-    res.json({ account });
-  } catch (err) {
-    console.error('Update account error:', err);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
-
-// DELETE /api/accounts/:id
-router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-
-    const existing = await prisma.account.findFirst({ where: { id, userId: req.userId } });
+router.delete(
+  '/:id',
+  asyncHandler(async (req: AuthRequest, res) => {
+    const existing = await prisma.account.findFirst({
+      where: { id: req.params.id, userId: req.userId },
+    });
     if (!existing) {
-      res.status(404).json({ error: 'Conta não encontrada' });
-      return;
+      return res.status(404).json({ error: 'Conta não encontrada' });
     }
 
-    const transactionCount = await prisma.transaction.count({ where: { accountId: id } });
-    if (transactionCount > 0) {
-      res.status(409).json({
-        error: `Não é possível excluir conta com transações. Esta conta possui ${transactionCount} transação(ões).`,
-      });
-      return;
+    const txCount = await prisma.transaction.count({ where: { accountId: req.params.id } });
+    if (txCount > 0) {
+      return res.status(409).json({ error: 'Não é possível excluir uma conta com transações. Exclua as transações primeiro.' });
     }
 
-    await prisma.account.delete({ where: { id } });
-
-    res.json({ message: 'Conta excluída com sucesso' });
-  } catch (err) {
-    console.error('Delete account error:', err);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
+    await prisma.account.delete({ where: { id: req.params.id } });
+    return res.status(204).send();
+  })
+);
 
 export default router;

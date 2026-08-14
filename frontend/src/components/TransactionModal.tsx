@@ -1,46 +1,68 @@
-import { useEffect } from 'react'
-import { useForm, Controller } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { Loader2 } from 'lucide-react'
-import Modal from './Modal'
-import api from '../lib/api'
-import { Transaction, TransactionType, Category, Account } from '../types'
-import clsx from 'clsx'
+import { useEffect } from 'react';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import clsx from 'clsx';
+import { Modal } from './Modal';
+import { Account, Category, Transaction } from '../types';
+import { toInputDate } from '../lib/format';
 
-const schema = z.object({
-  description: z.string().min(1, 'Descrição é obrigatória'),
-  type: z.nativeEnum(TransactionType),
-  amount: z.coerce.number().positive('Valor deve ser positivo'),
-  date: z.string().min(1, 'Data é obrigatória'),
-  categoryId: z.coerce.number().min(1, 'Selecione uma categoria'),
-  accountId: z.coerce.number().min(1, 'Selecione uma conta'),
-  notes: z.string().optional(),
-})
+const schema = z
+  .object({
+    description: z.string().min(1, 'Informe uma descrição'),
+    amount: z.coerce.number().positive('Valor deve ser maior que zero'),
+    type: z.enum(['INCOME', 'EXPENSE']),
+    date: z.string().min(1, 'Informe a data'),
+    accountId: z.string().min(1, 'Selecione uma conta'),
+    categoryId: z.string().min(1, 'Selecione uma categoria'),
+    notes: z.string().optional(),
+    mode: z.enum(['single', 'recurring', 'installment']),
+    recurrenceInterval: z.enum(['WEEKLY', 'MONTHLY', 'YEARLY']).optional(),
+    recurrenceCount: z.coerce.number().int().min(2).max(60).optional(),
+    installmentTotal: z.coerce.number().int().min(2).max(60).optional(),
+  })
+  .refine((data) => data.mode !== 'recurring' || (data.recurrenceInterval && data.recurrenceCount), {
+    message: 'Informe a frequência e quantas vezes deve se repetir',
+    path: ['recurrenceCount'],
+  })
+  .refine((data) => data.mode !== 'installment' || data.installmentTotal, {
+    message: 'Informe o número de parcelas',
+    path: ['installmentTotal'],
+  });
 
-type FormData = z.infer<typeof schema>
+type FormData = z.infer<typeof schema>;
 
-interface TransactionModalProps {
-  isOpen: boolean
-  onClose: () => void
-  onSuccess: () => void
-  transaction?: Transaction | null
-  categories: Category[]
-  accounts: Account[]
-  onToast: (type: 'success' | 'error', message: string) => void
+export interface TransactionSubmitData {
+  description: string;
+  amount: number;
+  type: 'INCOME' | 'EXPENSE';
+  date: string;
+  accountId: string;
+  categoryId: string;
+  notes?: string;
+  isRecurring: boolean;
+  recurrenceInterval?: 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+  recurrenceCount?: number;
+  isInstallment: boolean;
+  installmentTotal?: number;
 }
 
-const TransactionModal = ({
-  isOpen,
-  onClose,
-  onSuccess,
-  transaction,
-  categories,
-  accounts,
-  onToast,
-}: TransactionModalProps) => {
-  const isEdit = !!transaction
+interface TransactionModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (data: TransactionSubmitData) => Promise<void>;
+  accounts: Account[];
+  categories: Category[];
+  transaction?: Transaction | null;
+}
 
+const RECURRENCE_LABELS: Record<string, string> = {
+  WEEKLY: 'Semanalmente',
+  MONTHLY: 'Mensalmente',
+  YEARLY: 'Anualmente',
+};
+
+export function TransactionModal({ isOpen, onClose, onSubmit, accounts, categories, transaction }: TransactionModalProps) {
   const {
     register,
     handleSubmit,
@@ -51,226 +73,268 @@ const TransactionModal = ({
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: {
-      type: TransactionType.EXPENSE,
-      date: new Date().toISOString().split('T')[0],
-    },
-  })
-
-  const selectedType = watch('type')
-
-  const filteredCategories = categories.filter((c) => c.type === selectedType)
-
-  useEffect(() => {
-    if (isOpen) {
-      if (transaction) {
-        reset({
+    values: transaction
+      ? {
           description: transaction.description,
-          type: transaction.type,
           amount: transaction.amount,
-          date: transaction.date.split('T')[0],
-          categoryId: transaction.categoryId,
+          type: transaction.type,
+          date: toInputDate(transaction.date),
           accountId: transaction.accountId,
+          categoryId: transaction.categoryId,
           notes: transaction.notes || '',
-        })
-      } else {
-        reset({
+          mode: 'single',
+          recurrenceInterval: 'MONTHLY',
+          recurrenceCount: 12,
+          installmentTotal: 2,
+        }
+      : {
           description: '',
-          type: TransactionType.EXPENSE,
-          amount: undefined,
-          date: new Date().toISOString().split('T')[0],
-          categoryId: 0,
-          accountId: 0,
+          amount: 0,
+          type: 'EXPENSE',
+          date: toInputDate(new Date()),
+          accountId: accounts[0]?.id || '',
+          categoryId: '',
           notes: '',
-        })
-      }
-    }
-  }, [isOpen, transaction, reset])
+          mode: 'single',
+          recurrenceInterval: 'MONTHLY',
+          recurrenceCount: 12,
+          installmentTotal: 2,
+        },
+  });
 
-  // Reset category when type changes
+  const type = watch('type');
+  const mode = watch('mode');
+  const filteredCategories = categories.filter((c) => c.type === type);
+
   useEffect(() => {
-    setValue('categoryId', 0)
-  }, [selectedType, setValue])
-
-  const onSubmit = async (data: FormData) => {
-    try {
-      if (isEdit) {
-        await api.put(`/transactions/${transaction.id}`, data)
-        onToast('success', 'Transação atualizada com sucesso!')
-      } else {
-        await api.post('/transactions', data)
-        onToast('success', 'Transação criada com sucesso!')
-      }
-      onSuccess()
-      onClose()
-    } catch (err: unknown) {
-      const e = err as { response?: { data?: { message?: string } } }
-      onToast('error', e?.response?.data?.message || 'Erro ao salvar transação')
+    if (!transaction) {
+      setValue('categoryId', '');
     }
+  }, [type]);
+
+  async function handleFormSubmit(data: FormData) {
+    const payload: TransactionSubmitData = {
+      description: data.description,
+      amount: data.amount,
+      type: data.type,
+      date: data.date,
+      accountId: data.accountId,
+      categoryId: data.categoryId,
+      notes: data.notes,
+      isRecurring: data.mode === 'recurring',
+      recurrenceInterval: data.mode === 'recurring' ? data.recurrenceInterval : undefined,
+      recurrenceCount: data.mode === 'recurring' ? data.recurrenceCount : undefined,
+      isInstallment: data.mode === 'installment',
+      installmentTotal: data.mode === 'installment' ? data.installmentTotal : undefined,
+    };
+    await onSubmit(payload);
+    reset();
   }
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={isEdit ? 'Editar Transação' : 'Nova Transação'}
-      size="md"
-    >
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        {/* Type Toggle */}
+    <Modal isOpen={isOpen} onClose={onClose} title={transaction ? 'Editar transação' : 'Nova transação'} maxWidth="max-w-lg">
+      <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
+        <Controller
+          control={control}
+          name="type"
+          render={({ field }) => (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => field.onChange('EXPENSE')}
+                className={clsx(
+                  'py-2.5 rounded-xl text-sm font-medium border transition',
+                  field.value === 'EXPENSE' ? 'border-red-500 bg-red-50 text-red-700' : 'border-slate-200 text-slate-500'
+                )}
+              >
+                Despesa
+              </button>
+              <button
+                type="button"
+                onClick={() => field.onChange('INCOME')}
+                className={clsx(
+                  'py-2.5 rounded-xl text-sm font-medium border transition',
+                  field.value === 'INCOME' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-500'
+                )}
+              >
+                Receita
+              </button>
+            </div>
+          )}
+        />
+
         <div>
-          <label className="label">Tipo</label>
-          <Controller
-            name="type"
-            control={control}
-            render={({ field }) => (
-              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => field.onChange(TransactionType.EXPENSE)}
-                  className={clsx(
-                    'flex-1 py-2.5 text-sm font-medium transition-colors',
-                    field.value === TransactionType.EXPENSE
-                      ? 'bg-red-500 text-white'
-                      : 'bg-white text-gray-600 hover:bg-gray-50',
-                  )}
-                >
-                  Despesa
-                </button>
-                <button
-                  type="button"
-                  onClick={() => field.onChange(TransactionType.INCOME)}
-                  className={clsx(
-                    'flex-1 py-2.5 text-sm font-medium transition-colors',
-                    field.value === TransactionType.INCOME
-                      ? 'bg-green-500 text-white'
-                      : 'bg-white text-gray-600 hover:bg-gray-50',
-                  )}
-                >
-                  Receita
-                </button>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Descrição</label>
+          <input
+            {...register('description')}
+            className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            placeholder="Ex: Supermercado, Salário..."
+          />
+          {errors.description && <p className="text-xs text-red-600 mt-1">{errors.description.message}</p>}
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              {watch('mode') === 'installment' ? 'Valor da parcela' : 'Valor'}
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              {...register('amount')}
+              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              placeholder="0,00"
+            />
+            {errors.amount && <p className="text-xs text-red-600 mt-1">{errors.amount.message}</p>}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Data</label>
+            <input
+              type="date"
+              {...register('date')}
+              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            {errors.date && <p className="text-xs text-red-600 mt-1">{errors.date.message}</p>}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Conta</label>
+            <select
+              {...register('accountId')}
+              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Selecione...</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            {errors.accountId && <p className="text-xs text-red-600 mt-1">{errors.accountId.message}</p>}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Categoria</label>
+            <select
+              {...register('categoryId')}
+              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Selecione...</option>
+              {filteredCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            {errors.categoryId && <p className="text-xs text-red-600 mt-1">{errors.categoryId.message}</p>}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Observações (opcional)</label>
+          <textarea
+            {...register('notes')}
+            rows={2}
+            className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+          />
+        </div>
+
+        {!transaction && (
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Repetição</label>
+            <Controller
+              control={control}
+              name="mode"
+              render={({ field }) => (
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => field.onChange('single')}
+                    className={clsx(
+                      'py-2 rounded-xl text-xs font-medium border transition',
+                      field.value === 'single' ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-500'
+                    )}
+                  >
+                    Única
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => field.onChange('recurring')}
+                    className={clsx(
+                      'py-2 rounded-xl text-xs font-medium border transition',
+                      field.value === 'recurring' ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-500'
+                    )}
+                  >
+                    Recorrente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => field.onChange('installment')}
+                    className={clsx(
+                      'py-2 rounded-xl text-xs font-medium border transition',
+                      field.value === 'installment' ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-500'
+                    )}
+                  >
+                    Parcelada
+                  </button>
+                </div>
+              )}
+            />
+
+            {mode === 'recurring' && (
+              <div className="grid grid-cols-2 gap-4 mt-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Frequência</label>
+                  <select
+                    {...register('recurrenceInterval')}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    {Object.entries(RECURRENCE_LABELS).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Quantas vezes</label>
+                  <input
+                    type="number"
+                    min={2}
+                    max={60}
+                    {...register('recurrenceCount')}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  {errors.recurrenceCount && <p className="text-xs text-red-600 mt-1">{errors.recurrenceCount.message}</p>}
+                </div>
               </div>
             )}
-          />
-        </div>
 
-        {/* Description */}
-        <div>
-          <label className="label">Descrição</label>
-          <input
-            type="text"
-            placeholder="Ex: Supermercado, Salário..."
-            className={clsx('input-field', errors.description && 'border-red-300')}
-            {...register('description')}
-          />
-          {errors.description && (
-            <p className="text-red-500 text-xs mt-1">{errors.description.message}</p>
-          )}
-        </div>
-
-        {/* Amount */}
-        <div>
-          <label className="label">Valor (R$)</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0.01"
-            placeholder="0,00"
-            className={clsx('input-field', errors.amount && 'border-red-300')}
-            {...register('amount')}
-          />
-          {errors.amount && (
-            <p className="text-red-500 text-xs mt-1">{errors.amount.message}</p>
-          )}
-        </div>
-
-        {/* Date */}
-        <div>
-          <label className="label">Data</label>
-          <input
-            type="date"
-            className={clsx('input-field', errors.date && 'border-red-300')}
-            {...register('date')}
-          />
-          {errors.date && (
-            <p className="text-red-500 text-xs mt-1">{errors.date.message}</p>
-          )}
-        </div>
-
-        {/* Category */}
-        <div>
-          <label className="label">Categoria</label>
-          <select
-            className={clsx('input-field', errors.categoryId && 'border-red-300')}
-            {...register('categoryId')}
-          >
-            <option value={0}>Selecione uma categoria</option>
-            {filteredCategories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.icon ? `${c.icon} ` : ''}{c.name}
-              </option>
-            ))}
-          </select>
-          {errors.categoryId && (
-            <p className="text-red-500 text-xs mt-1">{errors.categoryId.message}</p>
-          )}
-        </div>
-
-        {/* Account */}
-        <div>
-          <label className="label">Conta</label>
-          <select
-            className={clsx('input-field', errors.accountId && 'border-red-300')}
-            {...register('accountId')}
-          >
-            <option value={0}>Selecione uma conta</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-          {errors.accountId && (
-            <p className="text-red-500 text-xs mt-1">{errors.accountId.message}</p>
-          )}
-        </div>
-
-        {/* Notes */}
-        <div>
-          <label className="label">Observações (opcional)</label>
-          <textarea
-            rows={2}
-            placeholder="Alguma observação sobre esta transação..."
-            className="input-field resize-none"
-            {...register('notes')}
-          />
-        </div>
-
-        {/* Actions */}
-        <div className="flex gap-3 pt-2">
-          <button type="button" onClick={onClose} className="btn-secondary flex-1">
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="btn-primary flex-1 flex items-center justify-center gap-2"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Salvando...
-              </>
-            ) : isEdit ? (
-              'Atualizar'
-            ) : (
-              'Criar Transação'
+            {mode === 'installment' && (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-slate-500 mb-1">Número de parcelas</label>
+                <input
+                  type="number"
+                  min={2}
+                  max={60}
+                  {...register('installmentTotal')}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                {errors.installmentTotal && <p className="text-xs text-red-600 mt-1">{errors.installmentTotal.message}</p>}
+              </div>
             )}
-          </button>
-        </div>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full rounded-xl bg-brand-600 text-white font-medium py-2.5 hover:bg-brand-700 transition disabled:opacity-60"
+        >
+          {isSubmitting ? 'Salvando...' : 'Salvar'}
+        </button>
       </form>
     </Modal>
-  )
+  );
 }
-
-export default TransactionModal

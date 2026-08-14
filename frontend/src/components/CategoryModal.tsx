@@ -1,132 +1,86 @@
-import { useEffect } from 'react'
-import { useForm, Controller } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { Loader2 } from 'lucide-react'
-import Modal from './Modal'
-import api from '../lib/api'
-import { Category, TransactionType } from '../types'
-import { presetColors } from '../lib/utils'
-import clsx from 'clsx'
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import clsx from 'clsx';
+import { Modal } from './Modal';
+import { Category } from '../types';
+import { CATEGORY_COLORS, ICON_NAMES, getIcon } from '../lib/icons';
 
 const schema = z.object({
-  name: z.string().min(1, 'Nome é obrigatório'),
-  type: z.nativeEnum(TransactionType),
-  color: z.string().min(1, 'Selecione uma cor'),
-  icon: z.string().optional(),
-})
+  name: z.string().min(1, 'Informe um nome'),
+  type: z.enum(['INCOME', 'EXPENSE']),
+  color: z.string().min(1),
+  icon: z.string().min(1),
+});
 
-type FormData = z.infer<typeof schema>
+type FormData = z.infer<typeof schema>;
 
 interface CategoryModalProps {
-  isOpen: boolean
-  onClose: () => void
-  onSuccess: () => void
-  category?: Category | null
-  defaultType?: TransactionType
-  onToast: (type: 'success' | 'error', message: string) => void
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (data: FormData) => Promise<void>;
+  category?: Category | null;
 }
 
-const CategoryModal = ({
-  isOpen,
-  onClose,
-  onSuccess,
-  category,
-  defaultType = TransactionType.EXPENSE,
-  onToast,
-}: CategoryModalProps) => {
-  const isEdit = !!category
-
+export function CategoryModal({ isOpen, onClose, onSubmit, category }: CategoryModalProps) {
   const {
     register,
     handleSubmit,
     control,
     reset,
-    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: {
-      type: defaultType,
-      color: presetColors[0],
-    },
-  })
+    values: category
+      ? { name: category.name, type: category.type, color: category.color, icon: category.icon }
+      : { name: '', type: 'EXPENSE', color: CATEGORY_COLORS[0], icon: 'MoreHorizontal' },
+  });
 
-  const selectedColor = watch('color')
-
-  useEffect(() => {
-    if (isOpen) {
-      if (category) {
-        reset({
-          name: category.name,
-          type: category.type,
-          color: category.color,
-          icon: category.icon || '',
-        })
-      } else {
-        reset({
-          name: '',
-          type: defaultType,
-          color: presetColors[0],
-          icon: '',
-        })
-      }
-    }
-  }, [isOpen, category, defaultType, reset])
-
-  const onSubmit = async (data: FormData) => {
-    try {
-      if (isEdit) {
-        await api.put(`/categories/${category.id}`, data)
-        onToast('success', 'Categoria atualizada com sucesso!')
-      } else {
-        await api.post('/categories', data)
-        onToast('success', 'Categoria criada com sucesso!')
-      }
-      onSuccess()
-      onClose()
-    } catch (err: unknown) {
-      const e = err as { response?: { data?: { message?: string } } }
-      onToast('error', e?.response?.data?.message || 'Erro ao salvar categoria')
-    }
+  async function handleFormSubmit(data: FormData) {
+    await onSubmit(data);
+    reset();
   }
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={isEdit ? 'Editar Categoria' : 'Nova Categoria'}
-      size="sm"
-    >
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        {/* Type Toggle */}
+    <Modal isOpen={isOpen} onClose={onClose} title={category ? 'Editar categoria' : 'Nova categoria'}>
+      <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
         <div>
-          <label className="label">Tipo</label>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Nome</label>
+          <input
+            {...register('name')}
+            className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            placeholder="Ex: Alimentação, Salário..."
+          />
+          {errors.name && <p className="text-xs text-red-600 mt-1">{errors.name.message}</p>}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
           <Controller
-            name="type"
             control={control}
+            name="type"
             render={({ field }) => (
-              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => field.onChange(TransactionType.EXPENSE)}
+                  onClick={() => field.onChange('EXPENSE')}
                   className={clsx(
-                    'flex-1 py-2.5 text-sm font-medium transition-colors',
-                    field.value === TransactionType.EXPENSE
-                      ? 'bg-red-500 text-white'
-                      : 'bg-white text-gray-600 hover:bg-gray-50',
+                    'py-2.5 rounded-xl text-sm font-medium border transition',
+                    field.value === 'EXPENSE'
+                      ? 'border-red-500 bg-red-50 text-red-700'
+                      : 'border-slate-200 text-slate-500'
                   )}
                 >
                   Despesa
                 </button>
                 <button
                   type="button"
-                  onClick={() => field.onChange(TransactionType.INCOME)}
+                  onClick={() => field.onChange('INCOME')}
                   className={clsx(
-                    'flex-1 py-2.5 text-sm font-medium transition-colors',
-                    field.value === TransactionType.INCOME
-                      ? 'bg-green-500 text-white'
-                      : 'bg-white text-gray-600 hover:bg-gray-50',
+                    'py-2.5 rounded-xl text-sm font-medium border transition',
+                    field.value === 'INCOME'
+                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                      : 'border-slate-200 text-slate-500'
                   )}
                 >
                   Receita
@@ -136,48 +90,49 @@ const CategoryModal = ({
           />
         </div>
 
-        {/* Name */}
         <div>
-          <label className="label">Nome</label>
-          <input
-            type="text"
-            placeholder="Ex: Alimentação, Transporte, Salário..."
-            className={clsx('input-field', errors.name && 'border-red-300')}
-            {...register('name')}
-          />
-          {errors.name && (
-            <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>
-          )}
-        </div>
-
-        {/* Icon */}
-        <div>
-          <label className="label">Ícone (opcional — use um emoji)</label>
-          <input
-            type="text"
-            placeholder="Ex: 🍔 🚗 💼"
-            className="input-field"
-            maxLength={4}
-            {...register('icon')}
-          />
-        </div>
-
-        {/* Color */}
-        <div>
-          <label className="label">Cor</label>
+          <label className="block text-sm font-medium text-slate-700 mb-2">Ícone</label>
           <Controller
-            name="color"
             control={control}
+            name="icon"
+            render={({ field }) => (
+              <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                {ICON_NAMES.map((name) => {
+                  const Icon = getIcon(name);
+                  return (
+                    <button
+                      type="button"
+                      key={name}
+                      onClick={() => field.onChange(name)}
+                      className={clsx(
+                        'h-10 w-10 rounded-xl flex items-center justify-center border transition',
+                        field.value === name ? 'border-brand-600 bg-brand-50 text-brand-600' : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                      )}
+                    >
+                      <Icon size={18} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-2">Cor</label>
+          <Controller
+            control={control}
+            name="color"
             render={({ field }) => (
               <div className="flex flex-wrap gap-2">
-                {presetColors.map((color) => (
+                {CATEGORY_COLORS.map((color) => (
                   <button
-                    key={color}
                     type="button"
+                    key={color}
                     onClick={() => field.onChange(color)}
                     className={clsx(
-                      'w-8 h-8 rounded-full border-2 transition-transform hover:scale-110',
-                      selectedColor === color ? 'border-gray-800 scale-110' : 'border-transparent',
+                      'h-8 w-8 rounded-full border-2 transition',
+                      field.value === color ? 'border-slate-900 scale-110' : 'border-transparent'
                     )}
                     style={{ backgroundColor: color }}
                   />
@@ -185,47 +140,16 @@ const CategoryModal = ({
               </div>
             )}
           />
-          {errors.color && (
-            <p className="text-red-500 text-xs mt-1">{errors.color.message}</p>
-          )}
-
-          {/* Preview */}
-          <div className="mt-3 flex items-center gap-3">
-            <span
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-medium"
-              style={{ backgroundColor: selectedColor }}
-            >
-              {watch('icon') && <span>{watch('icon')}</span>}
-              <span>{watch('name') || 'Categoria'}</span>
-            </span>
-          </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-3 pt-2">
-          <button type="button" onClick={onClose} className="btn-secondary flex-1">
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="btn-primary flex-1 flex items-center justify-center gap-2"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Salvando...
-              </>
-            ) : isEdit ? (
-              'Atualizar'
-            ) : (
-              'Criar Categoria'
-            )}
-          </button>
-        </div>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full rounded-xl bg-brand-600 text-white font-medium py-2.5 hover:bg-brand-700 transition disabled:opacity-60"
+        >
+          {isSubmitting ? 'Salvando...' : 'Salvar'}
+        </button>
       </form>
     </Modal>
-  )
+  );
 }
-
-export default CategoryModal

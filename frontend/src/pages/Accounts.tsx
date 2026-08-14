@@ -1,183 +1,156 @@
-import { useState } from 'react'
-import { Plus, Pencil, Trash2, Loader2, Wallet } from 'lucide-react'
-import { useAccounts } from '../hooks/useApi'
-import { formatCurrency, accountTypeLabels } from '../lib/utils'
-import { Account } from '../types'
-import AccountModal from '../components/AccountModal'
-import ConfirmDialog from '../components/ConfirmDialog'
-import Toast from '../components/Toast'
-import { useToast } from '../hooks/useToast'
-import api from '../lib/api'
+import { useEffect, useState } from 'react';
+import { Plus, Pencil, Trash2, Landmark } from 'lucide-react';
+import { api, getErrorMessage } from '../lib/api';
+import { Account } from '../types';
+import { AccountModal } from '../components/AccountModal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useToast } from '../components/Toast';
+import { formatCurrency } from '../lib/format';
+import { getIcon } from '../lib/icons';
 
-const Accounts = () => {
-  const { data: accounts, loading, refetch } = useAccounts()
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editingAccount, setEditingAccount] = useState<Account | null>(null)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [deletingAccount, setDeletingAccount] = useState<Account | null>(null)
-  const [deleteLoading, setDeleteLoading] = useState(false)
+export function Accounts() {
+  const { showToast } = useToast();
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Account | null>(null);
+  const [deleting, setDeleting] = useState<Account | null>(null);
 
-  const { toasts, removeToast, success, error: toastError } = useToast()
-
-  const totalBalance = (accounts ?? []).reduce((sum, a) => sum + a.balance, 0)
-
-  const handleEdit = (account: Account) => {
-    setEditingAccount(account)
-    setModalOpen(true)
-  }
-
-  const handleDelete = (account: Account) => {
-    setDeletingAccount(account)
-    setDeleteDialogOpen(true)
-  }
-
-  const confirmDelete = async () => {
-    if (!deletingAccount) return
-    setDeleteLoading(true)
+  async function load() {
+    setLoading(true);
     try {
-      await api.delete(`/accounts/${deletingAccount.id}`)
-      success('Conta excluída com sucesso!')
-      refetch()
-      setDeleteDialogOpen(false)
-      setDeletingAccount(null)
-    } catch {
-      toastError('Erro ao excluir conta. Verifique se não há transações vinculadas.')
+      const { data } = await api.get('/accounts');
+      setAccounts(data.accounts);
     } finally {
-      setDeleteLoading(false)
+      setLoading(false);
     }
   }
 
-  const handleOpenNew = () => {
-    setEditingAccount(null)
-    setModalOpen(true)
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function handleSubmit(formData: any) {
+    try {
+      if (editing) {
+        await api.put(`/accounts/${editing.id}`, formData);
+        showToast('Conta atualizada com sucesso');
+      } else {
+        await api.post('/accounts', formData);
+        showToast('Conta criada com sucesso');
+      }
+      setModalOpen(false);
+      setEditing(null);
+      load();
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleting) return;
+    try {
+      await api.delete(`/accounts/${deleting.id}`);
+      showToast('Conta excluída com sucesso');
+      setDeleting(null);
+      load();
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+      setDeleting(null);
+    }
   }
 
   return (
     <div className="space-y-6">
-      <Toast toasts={toasts} onRemove={removeToast} />
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Contas</h2>
-          <p className="text-sm text-gray-500">{(accounts ?? []).length} contas cadastradas</p>
+          <h1 className="text-2xl font-bold text-slate-900">Contas</h1>
+          <p className="text-slate-500 text-sm mt-0.5">Gerencie suas contas e carteiras</p>
         </div>
         <button
-          onClick={handleOpenNew}
-          className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center"
+          onClick={() => {
+            setEditing(null);
+            setModalOpen(true);
+          }}
+          className="flex items-center gap-2 rounded-xl bg-brand-600 text-white text-sm font-medium px-4 py-2.5 hover:bg-brand-700 transition"
         >
-          <Plus className="w-4 h-4" />
-          Nova Conta
+          <Plus size={18} />
+          Nova conta
         </button>
       </div>
 
-      {/* Total Balance Card */}
-      <div className="card bg-gradient-to-r from-primary-600 to-violet-600 text-white">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-primary-100 text-sm font-medium">Saldo Total</p>
-            <p className="text-3xl font-bold mt-1">{formatCurrency(totalBalance)}</p>
-            <p className="text-primary-200 text-xs mt-1">Soma de todas as contas</p>
-          </div>
-          <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center">
-            <Wallet className="w-7 h-7 text-white" />
-          </div>
-        </div>
-      </div>
-
-      {/* Accounts Grid */}
       {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        <div className="flex justify-center py-24">
+          <div className="h-8 w-8 rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin" />
         </div>
-      ) : (accounts ?? []).length === 0 ? (
-        <div className="card flex flex-col items-center justify-center h-48 text-gray-400">
-          <Wallet className="w-12 h-12 mb-3 text-gray-300" />
-          <p className="font-medium text-gray-500">Nenhuma conta cadastrada</p>
-          <p className="text-sm mt-1">Clique em "Nova Conta" para começar</p>
+      ) : accounts.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+          <Landmark className="mx-auto text-slate-300 mb-3" size={40} />
+          <p className="text-slate-500">Você ainda não tem nenhuma conta cadastrada.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {(accounts ?? []).map((account) => (
-            <div
-              key={account.id}
-              className="card relative overflow-hidden group hover:shadow-md transition-shadow"
-            >
-              {/* Color stripe */}
-              <div
-                className="absolute top-0 left-0 w-1 h-full rounded-l-xl"
-                style={{ backgroundColor: account.color }}
-              />
-
-              <div className="pl-3">
-                {/* Icon and actions */}
-                <div className="flex items-start justify-between mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {accounts.map((account) => {
+            const Icon = getIcon(account.icon);
+            return (
+              <div key={account.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                <div className="flex items-start justify-between">
                   <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-lg font-bold flex-shrink-0"
-                    style={{ backgroundColor: account.color }}
+                    className="h-11 w-11 rounded-xl flex items-center justify-center"
+                    style={{ backgroundColor: `${account.color}20`, color: account.color }}
                   >
-                    {account.icon || account.name.charAt(0).toUpperCase()}
+                    <Icon size={20} />
                   </div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex gap-1">
                     <button
-                      onClick={() => handleEdit(account)}
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 transition-colors"
+                      onClick={() => {
+                        setEditing(account);
+                        setModalOpen(true);
+                      }}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
                     >
-                      <Pencil className="w-3.5 h-3.5" />
+                      <Pencil size={16} />
                     </button>
                     <button
-                      onClick={() => handleDelete(account)}
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      onClick={() => setDeleting(account)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </div>
-
-                {/* Account info */}
-                <p className="font-semibold text-gray-900 truncate">{account.name}</p>
-                <p className="text-xs text-gray-500 mb-3">{accountTypeLabels[account.type]}</p>
-
-                {/* Balance */}
-                <div>
-                  <p className="text-xs text-gray-400 mb-0.5">Saldo</p>
-                  <p
-                    className={`text-lg font-bold ${account.balance >= 0 ? 'text-gray-900' : 'text-red-600'}`}
-                  >
-                    {formatCurrency(account.balance)}
-                  </p>
-                </div>
+                <p className="font-medium text-slate-900 mt-3">{account.name}</p>
+                <p
+                  className={`text-xl font-bold mt-1 ${
+                    account.currentBalance < 0 ? 'text-red-600' : 'text-slate-900'
+                  }`}
+                >
+                  {formatCurrency(account.currentBalance)}
+                </p>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Modals */}
       <AccountModal
         isOpen={modalOpen}
         onClose={() => {
-          setModalOpen(false)
-          setEditingAccount(null)
+          setModalOpen(false);
+          setEditing(null);
         }}
-        onSuccess={refetch}
-        account={editingAccount}
-        onToast={(type, msg) => (type === 'success' ? success(msg) : toastError(msg))}
+        onSubmit={handleSubmit}
+        account={editing}
       />
 
       <ConfirmDialog
-        isOpen={deleteDialogOpen}
-        onClose={() => {
-          setDeleteDialogOpen(false)
-          setDeletingAccount(null)
-        }}
-        onConfirm={confirmDelete}
-        title="Excluir Conta"
-        message={`Tem certeza que deseja excluir a conta "${deletingAccount?.name}"? Esta ação não pode ser desfeita.`}
-        loading={deleteLoading}
+        isOpen={!!deleting}
+        title="Excluir conta"
+        message={`Tem certeza que deseja excluir a conta "${deleting?.name}"?`}
+        confirmLabel="Excluir"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleting(null)}
       />
     </div>
-  )
+  );
 }
-
-export default Accounts

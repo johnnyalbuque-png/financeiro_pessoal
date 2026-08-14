@@ -1,15 +1,16 @@
 {
   "name": "financeiro-pessoal-backend",
   "version": "1.0.0",
-  "description": "Personal Finance App Backend",
+  "description": "Backend do sistema de controle financeiro pessoal",
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/server.js",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:seed": "ts-node src/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
@@ -27,6 +28,7 @@
     "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^20.11.24",
     "prisma": "^5.10.0",
+    "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.4.2"
   }

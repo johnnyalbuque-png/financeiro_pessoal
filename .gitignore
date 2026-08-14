@@ -6,3 +6,5 @@ dist/
 .vscode/
 *.local
 backend/dist/
+*.db
+*.db-journal

@@ -23,7 +23,7 @@ model User {
 model Account {
   id           String        @id @default(cuid())
   name         String
-  type         String        // CHECKING | SAVINGS | CREDIT_CARD | INVESTMENT | CASH
+  type         String // CHECKING | SAVINGS | CREDIT_CARD | INVESTMENT | CASH
   balance      Float         @default(0)
   color        String
   icon         String
@@ -32,12 +32,14 @@ model Account {
   updatedAt    DateTime      @updatedAt
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
+
+  @@index([userId])
 }
 
 model Category {
   id           String        @id @default(cuid())
   name         String
-  type         String        // INCOME | EXPENSE
+  type         String // INCOME | EXPENSE
   color        String
   icon         String
   userId       String
@@ -46,13 +48,15 @@ model Category {
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
   budgets      Budget[]
+
+  @@index([userId])
 }
 
 model Transaction {
   id          String   @id @default(cuid())
   description String
   amount      Float
-  type        String   // INCOME | EXPENSE
+  type        String // INCOME | EXPENSE
   date        DateTime
   notes       String?
   userId      String
@@ -60,9 +64,22 @@ model Transaction {
   categoryId  String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account     Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  category    Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  // Recorrência / Parcelamento
+  seriesId          String? // agrupa lançamentos gerados de uma mesma recorrência ou parcelamento
+  seriesType        String? // RECURRING | INSTALLMENT
+  recurrenceInterval String? // WEEKLY | MONTHLY | YEARLY (apenas quando seriesType = RECURRING)
+  installmentNumber Int? // parcela atual (apenas quando seriesType = INSTALLMENT)
+  installmentTotal  Int? // total de parcelas (apenas quando seriesType = INSTALLMENT)
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([categoryId])
+  @@index([seriesId])
 }
 
 model Budget {

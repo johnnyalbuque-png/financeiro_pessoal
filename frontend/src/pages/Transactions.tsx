@@ -1,296 +1,317 @@
-import { useState } from 'react'
-import { Plus, Pencil, Trash2, Loader2, Search, Filter } from 'lucide-react'
-import { useTransactions } from '../hooks/useApi'
-import { useAccounts, useCategories } from '../hooks/useApi'
-import { formatCurrency, formatDate, monthNames } from '../lib/utils'
-import { Transaction, TransactionType } from '../types'
-import TransactionModal from '../components/TransactionModal'
-import ConfirmDialog from '../components/ConfirmDialog'
-import Toast from '../components/Toast'
-import { useToast } from '../hooks/useToast'
-import api from '../lib/api'
-import clsx from 'clsx'
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Pencil, Trash2, Search, Repeat, Layers, Receipt } from 'lucide-react';
+import { api, getErrorMessage } from '../lib/api';
+import { Account, Category, Transaction } from '../types';
+import { TransactionModal, TransactionSubmitData } from '../components/TransactionModal';
+import { Modal } from '../components/Modal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useToast } from '../components/Toast';
+import { formatCurrency, formatDate } from '../lib/format';
+import { getIcon } from '../lib/icons';
 
-const Transactions = () => {
-  const now = new Date()
-  const [month, setMonth] = useState(now.getMonth() + 1)
-  const [year, setYear] = useState(now.getFullYear())
-  const [typeFilter, setTypeFilter] = useState<TransactionType | 'ALL'>('ALL')
-  const [categoryFilter, setCategoryFilter] = useState<number>(0)
-  const [accountFilter, setAccountFilter] = useState<number>(0)
-  const [search, setSearch] = useState('')
+export function Transactions() {
+  const { showToast } = useToast();
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Transaction | null>(null);
+  const [deleting, setDeleting] = useState<Transaction | null>(null);
 
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null)
-  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [accountFilter, setAccountFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
 
-  const { toasts, removeToast, success, error: toastError } = useToast()
-
-  const { data: transactions, loading, refetch } = useTransactions({
-    month,
-    year,
-    type: typeFilter,
-    categoryId: categoryFilter || undefined,
-    accountId: accountFilter || undefined,
-  })
-
-  const { data: categories } = useCategories()
-  const { data: accounts } = useAccounts()
-
-  const filtered = (transactions ?? []).filter((tx) => {
-    if (!search) return true
-    return tx.description.toLowerCase().includes(search.toLowerCase())
-  })
-
-  const handleEdit = (tx: Transaction) => {
-    setEditingTransaction(tx)
-    setModalOpen(true)
-  }
-
-  const handleDelete = (tx: Transaction) => {
-    setDeletingTransaction(tx)
-    setDeleteDialogOpen(true)
-  }
-
-  const confirmDelete = async () => {
-    if (!deletingTransaction) return
-    setDeleteLoading(true)
+  async function load() {
+    setLoading(true);
     try {
-      await api.delete(`/transactions/${deletingTransaction.id}`)
-      success('Transação excluída com sucesso!')
-      refetch()
-      setDeleteDialogOpen(false)
-      setDeletingTransaction(null)
-    } catch {
-      toastError('Erro ao excluir transação')
+      const [txRes, accRes, catRes] = await Promise.all([
+        api.get('/transactions'),
+        api.get('/accounts'),
+        api.get('/categories'),
+      ]);
+      setTransactions(txRes.data.transactions);
+      setAccounts(accRes.data.accounts);
+      setCategories(catRes.data.categories);
     } finally {
-      setDeleteLoading(false)
+      setLoading(false);
     }
   }
 
-  const handleOpenNew = () => {
-    setEditingTransaction(null)
-    setModalOpen(true)
+  useEffect(() => {
+    load();
+  }, []);
+
+  const filtered = useMemo(() => {
+    return transactions.filter((tx) => {
+      if (typeFilter && tx.type !== typeFilter) return false;
+      if (accountFilter && tx.accountId !== accountFilter) return false;
+      if (categoryFilter && tx.categoryId !== categoryFilter) return false;
+      if (search && !tx.description.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+  }, [transactions, typeFilter, accountFilter, categoryFilter, search]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, Transaction[]>();
+    for (const tx of filtered) {
+      const key = formatDate(tx.date);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(tx);
+    }
+    return Array.from(map.entries());
+  }, [filtered]);
+
+  async function handleSubmit(data: TransactionSubmitData) {
+    try {
+      if (editing) {
+        await api.put(`/transactions/${editing.id}`, {
+          description: data.description,
+          amount: data.amount,
+          type: data.type,
+          date: data.date,
+          accountId: data.accountId,
+          categoryId: data.categoryId,
+          notes: data.notes,
+        });
+        showToast('Transação atualizada com sucesso');
+      } else {
+        await api.post('/transactions', data);
+        showToast('Transação criada com sucesso');
+      }
+      setModalOpen(false);
+      setEditing(null);
+      load();
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+    }
   }
 
-  const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i)
+  async function handleDelete(scope: 'single' | 'future' | 'all') {
+    if (!deleting) return;
+    try {
+      await api.delete(`/transactions/${deleting.id}`, { params: { scope } });
+      showToast('Transação excluída com sucesso');
+      setDeleting(null);
+      load();
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+      setDeleting(null);
+    }
+  }
 
   return (
-    <div className="space-y-4">
-      <Toast toasts={toasts} onRemove={removeToast} />
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Transações</h2>
-          <p className="text-sm text-gray-500">{filtered.length} transações encontradas</p>
+          <h1 className="text-2xl font-bold text-slate-900">Transações</h1>
+          <p className="text-slate-500 text-sm mt-0.5">Todas as suas receitas e despesas</p>
         </div>
-        <button onClick={handleOpenNew} className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center">
-          <Plus className="w-4 h-4" />
-          Nova Transação
+        <button
+          onClick={() => {
+            setEditing(null);
+            setModalOpen(true);
+          }}
+          className="flex items-center gap-2 rounded-xl bg-brand-600 text-white text-sm font-medium px-4 py-2.5 hover:bg-brand-700 transition"
+        >
+          <Plus size={18} />
+          Nova transação
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="card p-4">
-        <div className="flex items-center gap-2 mb-3 text-sm font-medium text-gray-600">
-          <Filter className="w-4 h-4" />
-          Filtros
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {/* Month */}
-          <select
-            value={month}
-            onChange={(e) => setMonth(Number(e.target.value))}
-            className="input-field text-sm"
-          >
-            {monthNames.map((name, i) => (
-              <option key={i} value={i + 1}>{name}</option>
-            ))}
-          </select>
-
-          {/* Year */}
-          <select
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="input-field text-sm"
-          >
-            {years.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-
-          {/* Type */}
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as TransactionType | 'ALL')}
-            className="input-field text-sm"
-          >
-            <option value="ALL">Todos os tipos</option>
-            <option value={TransactionType.INCOME}>Receitas</option>
-            <option value={TransactionType.EXPENSE}>Despesas</option>
-          </select>
-
-          {/* Category */}
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(Number(e.target.value))}
-            className="input-field text-sm"
-          >
-            <option value={0}>Todas as categorias</option>
-            {(categories ?? []).map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-
-          {/* Account */}
-          <select
-            value={accountFilter}
-            onChange={(e) => setAccountFilter(Number(e.target.value))}
-            className="input-field text-sm"
-          >
-            <option value={0}>Todas as contas</option>
-            {(accounts ?? []).map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Search */}
-        <div className="relative mt-3">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
-            type="text"
-            placeholder="Buscar por descrição..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="input-field pl-9 text-sm"
+            placeholder="Buscar por descrição..."
+            className="w-full rounded-xl border border-slate-200 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
+          <option value="">Todos os tipos</option>
+          <option value="INCOME">Receitas</option>
+          <option value="EXPENSE">Despesas</option>
+        </select>
+        <select
+          value={accountFilter}
+          onChange={(e) => setAccountFilter(e.target.value)}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
+          <option value="">Todas as contas</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
+          <option value="">Todas as categorias</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
       </div>
 
-      {/* Table */}
-      <div className="card p-0 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center h-48">
-            <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-gray-400">
-            <p className="font-medium">Nenhuma transação encontrada</p>
-            <p className="text-sm mt-1">Ajuste os filtros ou crie uma nova transação</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Data</th>
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Descrição</th>
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 hidden sm:table-cell">Categoria</th>
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 hidden md:table-cell">Conta</th>
-                  <th className="text-right text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Valor</th>
-                  <th className="text-right text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
-                      {formatDate(tx.date)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-gray-900">{tx.description}</p>
-                      {tx.notes && (
-                        <p className="text-xs text-gray-400 truncate max-w-[200px]">{tx.notes}</p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
-                      {tx.category && (
-                        <span
-                          className="badge text-white text-xs"
-                          style={{ backgroundColor: tx.category.color }}
-                        >
-                          {tx.category.icon && <span className="mr-1">{tx.category.icon}</span>}
-                          {tx.category.name}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 hidden md:table-cell">
-                      <div className="flex items-center gap-2">
-                        {tx.account?.color && (
-                          <div
-                            className="w-2 h-2 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: tx.account.color }}
-                          />
-                        )}
-                        <span className="text-sm text-gray-600">{tx.account?.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <span
-                        className={clsx(
-                          'text-sm font-semibold',
-                          tx.type === TransactionType.INCOME ? 'text-green-600' : 'text-red-600',
-                        )}
+      {loading ? (
+        <div className="flex justify-center py-24">
+          <div className="h-8 w-8 rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+          <Receipt className="mx-auto text-slate-300 mb-3" size={40} />
+          <p className="text-slate-500">Nenhuma transação encontrada.</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {groups.map(([date, txs]) => (
+            <div key={date} className="bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <div className="px-5 py-3 border-b border-slate-100 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                {date}
+              </div>
+              <div className="divide-y divide-slate-100">
+                {txs.map((tx) => {
+                  const Icon = getIcon(tx.category.icon);
+                  return (
+                    <div key={tx.id} className="flex items-center gap-3 px-5 py-3 group">
+                      <div
+                        className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: `${tx.category.color}20`, color: tx.category.color }}
                       >
-                        {tx.type === TransactionType.INCOME ? '+' : '-'}
+                        <Icon size={18} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium text-slate-900 truncate">{tx.description}</p>
+                          {tx.seriesType === 'RECURRING' && <Repeat size={13} className="text-slate-400 shrink-0" />}
+                          {tx.seriesType === 'INSTALLMENT' && (
+                            <span className="flex items-center gap-0.5 text-xs text-slate-400 shrink-0">
+                              <Layers size={13} />
+                              {tx.installmentNumber}/{tx.installmentTotal}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {tx.category.name} · {tx.account.name}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-sm font-semibold shrink-0 ${
+                          tx.type === 'INCOME' ? 'text-emerald-600' : 'text-red-600'
+                        }`}
+                      >
+                        {tx.type === 'INCOME' ? '+' : '-'}
                         {formatCurrency(tx.amount)}
                       </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex gap-1 shrink-0">
                         <button
-                          onClick={() => handleEdit(tx)}
-                          className="p-1.5 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 transition-colors"
+                          onClick={() => {
+                            setEditing(tx);
+                            setModalOpen(true);
+                          }}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
                         >
-                          <Pencil className="w-4 h-4" />
+                          <Pencil size={15} />
                         </button>
                         <button
-                          onClick={() => handleDelete(tx)}
-                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          onClick={() => setDeleting(tx)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 size={15} />
                         </button>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
-      {/* Modals */}
       <TransactionModal
         isOpen={modalOpen}
         onClose={() => {
-          setModalOpen(false)
-          setEditingTransaction(null)
+          setModalOpen(false);
+          setEditing(null);
         }}
-        onSuccess={refetch}
-        transaction={editingTransaction}
-        categories={categories ?? []}
-        accounts={accounts ?? []}
-        onToast={(type, msg) => (type === 'success' ? success(msg) : toastError(msg))}
+        onSubmit={handleSubmit}
+        accounts={accounts}
+        categories={categories}
+        transaction={editing}
       />
 
-      <ConfirmDialog
-        isOpen={deleteDialogOpen}
-        onClose={() => {
-          setDeleteDialogOpen(false)
-          setDeletingTransaction(null)
-        }}
-        onConfirm={confirmDelete}
-        title="Excluir Transação"
-        message={`Tem certeza que deseja excluir "${deletingTransaction?.description}"? Esta ação não pode ser desfeita.`}
-        loading={deleteLoading}
-      />
+      {deleting && deleting.seriesId ? (
+        <DeleteSeriesDialog
+          transaction={deleting}
+          onCancel={() => setDeleting(null)}
+          onConfirm={handleDelete}
+        />
+      ) : (
+        <ConfirmDialog
+          isOpen={!!deleting}
+          title="Excluir transação"
+          message={`Tem certeza que deseja excluir "${deleting?.description}"?`}
+          confirmLabel="Excluir"
+          onConfirm={() => handleDelete('single')}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
     </div>
-  )
+  );
 }
 
-export default Transactions
+function DeleteSeriesDialog({
+  transaction,
+  onCancel,
+  onConfirm,
+}: {
+  transaction: Transaction;
+  onCancel: () => void;
+  onConfirm: (scope: 'single' | 'future' | 'all') => void;
+}) {
+  const label = transaction.seriesType === 'INSTALLMENT' ? 'parcelamento' : 'recorrência';
+  return (
+    <Modal isOpen onClose={onCancel} title="Excluir transação">
+      <p className="text-sm text-slate-500 mb-4">
+        Esta transação faz parte de um {label}. O que você deseja excluir?
+      </p>
+      <div className="space-y-2">
+        <button
+          onClick={() => onConfirm('single')}
+          className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:border-brand-500 hover:bg-brand-50 transition text-sm font-medium text-slate-700"
+        >
+          Apenas esta transação
+        </button>
+        <button
+          onClick={() => onConfirm('future')}
+          className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:border-brand-500 hover:bg-brand-50 transition text-sm font-medium text-slate-700"
+        >
+          Esta e as futuras
+        </button>
+        <button
+          onClick={() => onConfirm('all')}
+          className="w-full text-left px-4 py-3 rounded-xl border border-red-200 hover:border-red-500 hover:bg-red-50 transition text-sm font-medium text-red-700"
+        >
+          Todas as transações do {label}
+        </button>
+      </div>
+      <button onClick={onCancel} className="w-full mt-3 py-2 text-sm text-slate-500 hover:text-slate-700">
+        Cancelar
+      </button>
+    </Modal>
+  );
+}

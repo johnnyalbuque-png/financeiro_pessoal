@@ -1,224 +1,188 @@
-import { useState } from 'react'
-import { Plus, Pencil, Trash2, Loader2, Tag } from 'lucide-react'
-import { useCategories } from '../hooks/useApi'
-import { Category, TransactionType } from '../types'
-import CategoryModal from '../components/CategoryModal'
-import ConfirmDialog from '../components/ConfirmDialog'
-import Toast from '../components/Toast'
-import { useToast } from '../hooks/useToast'
-import api from '../lib/api'
+import { useEffect, useState } from 'react';
+import { Plus, Pencil, Trash2, Tags } from 'lucide-react';
+import { api, getErrorMessage } from '../lib/api';
+import { Category } from '../types';
+import { CategoryModal } from '../components/CategoryModal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useToast } from '../components/Toast';
+import { getIcon } from '../lib/icons';
 
-const Categories = () => {
-  const { data: categories, loading, refetch } = useCategories()
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editingCategory, setEditingCategory] = useState<Category | null>(null)
-  const [defaultType, setDefaultType] = useState<TransactionType>(TransactionType.EXPENSE)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [deletingCategory, setDeletingCategory] = useState<Category | null>(null)
-  const [deleteLoading, setDeleteLoading] = useState(false)
+export function Categories() {
+  const { showToast } = useToast();
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Category | null>(null);
+  const [deleting, setDeleting] = useState<Category | null>(null);
 
-  const { toasts, removeToast, success, error: toastError } = useToast()
-
-  const incomeCategories = (categories ?? []).filter((c) => c.type === TransactionType.INCOME)
-  const expenseCategories = (categories ?? []).filter((c) => c.type === TransactionType.EXPENSE)
-
-  const handleEdit = (category: Category) => {
-    setEditingCategory(category)
-    setModalOpen(true)
-  }
-
-  const handleDelete = (category: Category) => {
-    setDeletingCategory(category)
-    setDeleteDialogOpen(true)
-  }
-
-  const confirmDelete = async () => {
-    if (!deletingCategory) return
-    setDeleteLoading(true)
+  async function load() {
+    setLoading(true);
     try {
-      await api.delete(`/categories/${deletingCategory.id}`)
-      success('Categoria excluída com sucesso!')
-      refetch()
-      setDeleteDialogOpen(false)
-      setDeletingCategory(null)
-    } catch {
-      toastError('Erro ao excluir categoria. Verifique se não há transações vinculadas.')
+      const { data } = await api.get('/categories');
+      setCategories(data.categories);
     } finally {
-      setDeleteLoading(false)
+      setLoading(false);
     }
   }
 
-  const handleOpenNew = (type: TransactionType) => {
-    setEditingCategory(null)
-    setDefaultType(type)
-    setModalOpen(true)
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function handleSubmit(formData: any) {
+    try {
+      if (editing) {
+        await api.put(`/categories/${editing.id}`, formData);
+        showToast('Categoria atualizada com sucesso');
+      } else {
+        await api.post('/categories', formData);
+        showToast('Categoria criada com sucesso');
+      }
+      setModalOpen(false);
+      setEditing(null);
+      load();
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+    }
   }
 
-  const CategoryCard = ({ category }: { category: Category }) => (
-    <div className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-white hover:shadow-sm transition-shadow group">
-      <div
-        className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-white font-semibold"
-        style={{ backgroundColor: category.color }}
-      >
-        {category.icon ? (
-          <span className="text-lg">{category.icon}</span>
-        ) : (
-          <span className="text-sm">{category.name.charAt(0).toUpperCase()}</span>
-        )}
-      </div>
-      <span className="flex-1 text-sm font-medium text-gray-800">{category.name}</span>
-      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
-          onClick={() => handleEdit(category)}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 transition-colors"
-        >
-          <Pencil className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => handleDelete(category)}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </div>
-  )
+  async function handleDelete() {
+    if (!deleting) return;
+    try {
+      await api.delete(`/categories/${deleting.id}`);
+      showToast('Categoria excluída com sucesso');
+      setDeleting(null);
+      load();
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+      setDeleting(null);
+    }
+  }
 
-  const SectionHeader = ({
-    title,
-    count,
-    type,
-    color,
-  }: {
-    title: string
-    count: number
-    type: TransactionType
-    color: string
-  }) => (
-    <div className="flex items-center justify-between mb-4">
-      <div className="flex items-center gap-3">
-        <h2 className="text-lg font-bold text-gray-900">{title}</h2>
-        <span
-          className="badge text-white"
-          style={{ backgroundColor: color }}
-        >
-          {count}
-        </span>
-      </div>
-      <button
-        onClick={() => handleOpenNew(type)}
-        className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-      >
-        <Plus className="w-3.5 h-3.5" />
-        Adicionar
-      </button>
-    </div>
-  )
+  const income = categories.filter((c) => c.type === 'INCOME');
+  const expense = categories.filter((c) => c.type === 'EXPENSE');
 
   return (
     <div className="space-y-6">
-      <Toast toasts={toasts} onRemove={removeToast} />
-
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Categorias</h2>
-          <p className="text-sm text-gray-500">
-            {(categories ?? []).length} categorias no total
-          </p>
+          <h1 className="text-2xl font-bold text-slate-900">Categorias</h1>
+          <p className="text-slate-500 text-sm mt-0.5">Organize suas receitas e despesas</p>
         </div>
+        <button
+          onClick={() => {
+            setEditing(null);
+            setModalOpen(true);
+          }}
+          className="flex items-center gap-2 rounded-xl bg-brand-600 text-white text-sm font-medium px-4 py-2.5 hover:bg-brand-700 transition"
+        >
+          <Plus size={18} />
+          Nova categoria
+        </button>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        <div className="flex justify-center py-24">
+          <div className="h-8 w-8 rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin" />
+        </div>
+      ) : categories.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+          <Tags className="mx-auto text-slate-300 mb-3" size={40} />
+          <p className="text-slate-500">Você ainda não tem nenhuma categoria cadastrada.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Income Categories */}
-          <div className="card">
-            <SectionHeader
-              title="Receitas"
-              count={incomeCategories.length}
-              type={TransactionType.INCOME}
-              color="#22c55e"
-            />
-            {incomeCategories.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-gray-400">
-                <Tag className="w-10 h-10 mb-2 text-gray-300" />
-                <p className="text-sm">Nenhuma categoria de receita</p>
-                <button
-                  onClick={() => handleOpenNew(TransactionType.INCOME)}
-                  className="mt-3 text-sm text-primary-600 hover:text-primary-700 font-medium"
-                >
-                  + Criar categoria
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {incomeCategories.map((c) => (
-                  <CategoryCard key={c.id} category={c} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Expense Categories */}
-          <div className="card">
-            <SectionHeader
-              title="Despesas"
-              count={expenseCategories.length}
-              type={TransactionType.EXPENSE}
-              color="#ef4444"
-            />
-            {expenseCategories.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-gray-400">
-                <Tag className="w-10 h-10 mb-2 text-gray-300" />
-                <p className="text-sm">Nenhuma categoria de despesa</p>
-                <button
-                  onClick={() => handleOpenNew(TransactionType.EXPENSE)}
-                  className="mt-3 text-sm text-primary-600 hover:text-primary-700 font-medium"
-                >
-                  + Criar categoria
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {expenseCategories.map((c) => (
-                  <CategoryCard key={c.id} category={c} />
-                ))}
-              </div>
-            )}
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <CategoryGroup
+            title="Receitas"
+            items={income}
+            onEdit={(c) => {
+              setEditing(c);
+              setModalOpen(true);
+            }}
+            onDelete={setDeleting}
+          />
+          <CategoryGroup
+            title="Despesas"
+            items={expense}
+            onEdit={(c) => {
+              setEditing(c);
+              setModalOpen(true);
+            }}
+            onDelete={setDeleting}
+          />
         </div>
       )}
 
-      {/* Modals */}
       <CategoryModal
         isOpen={modalOpen}
         onClose={() => {
-          setModalOpen(false)
-          setEditingCategory(null)
+          setModalOpen(false);
+          setEditing(null);
         }}
-        onSuccess={refetch}
-        category={editingCategory}
-        defaultType={defaultType}
-        onToast={(type, msg) => (type === 'success' ? success(msg) : toastError(msg))}
+        onSubmit={handleSubmit}
+        category={editing}
       />
 
       <ConfirmDialog
-        isOpen={deleteDialogOpen}
-        onClose={() => {
-          setDeleteDialogOpen(false)
-          setDeletingCategory(null)
-        }}
-        onConfirm={confirmDelete}
-        title="Excluir Categoria"
-        message={`Tem certeza que deseja excluir a categoria "${deletingCategory?.name}"? As transações vinculadas podem ser afetadas.`}
-        loading={deleteLoading}
+        isOpen={!!deleting}
+        title="Excluir categoria"
+        message={`Tem certeza que deseja excluir a categoria "${deleting?.name}"?`}
+        confirmLabel="Excluir"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleting(null)}
       />
     </div>
-  )
+  );
 }
 
-export default Categories
+function CategoryGroup({
+  title,
+  items,
+  onEdit,
+  onDelete,
+}: {
+  title: string;
+  items: Category[];
+  onEdit: (c: Category) => void;
+  onDelete: (c: Category) => void;
+}) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
+      <div className="px-5 py-4 border-b border-slate-100">
+        <h2 className="font-semibold text-slate-900">{title}</h2>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-sm text-slate-400 px-5 py-6 text-center">Nenhuma categoria</p>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {items.map((category) => {
+            const Icon = getIcon(category.icon);
+            return (
+              <div key={category.id} className="flex items-center gap-3 px-5 py-3">
+                <div
+                  className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: `${category.color}20`, color: category.color }}
+                >
+                  <Icon size={16} />
+                </div>
+                <span className="text-sm font-medium text-slate-800 flex-1">{category.name}</span>
+                <button
+                  onClick={() => onEdit(category)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                >
+                  <Pencil size={15} />
+                </button>
+                <button
+                  onClick={() => onDelete(category)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}

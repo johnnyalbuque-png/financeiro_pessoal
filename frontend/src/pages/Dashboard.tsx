@@ -1,371 +1,207 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Wallet, TrendingUp, TrendingDown, Receipt } from 'lucide-react';
 import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
   BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
   Legend,
-} from 'recharts'
-import {
-  TrendingUp,
-  TrendingDown,
-  Wallet,
-  DollarSign,
-  ChevronLeft,
-  ChevronRight,
-  Loader2,
-} from 'lucide-react'
-import { useDashboard } from '../hooks/useApi'
-import { formatCurrency, monthNames, getProgressColor, getProgressTextColor } from '../lib/utils'
-import { TransactionType } from '../types'
-import clsx from 'clsx'
+} from 'recharts';
+import { api } from '../lib/api';
+import { DashboardSummary } from '../types';
+import { StatCard } from '../components/StatCard';
+import { formatCurrency, formatDate } from '../lib/format';
+import { getIcon } from '../lib/icons';
 
-const StatCard = ({
-  title,
-  value,
-  icon: Icon,
-  color,
-  subtitle,
-}: {
-  title: string
-  value: number
-  icon: React.ComponentType<{ className?: string }>
-  color: string
-  subtitle?: string
-}) => (
-  <div className="card">
-    <div className="flex items-start justify-between">
-      <div>
-        <p className="text-sm font-medium text-gray-500">{title}</p>
-        <p className={clsx('text-2xl font-bold mt-1', color)}>{formatCurrency(value)}</p>
-        {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
-      </div>
-      <div
-        className={clsx(
-          'w-11 h-11 rounded-xl flex items-center justify-center',
-          color === 'text-green-600'
-            ? 'bg-green-100'
-            : color === 'text-red-600'
-              ? 'bg-red-100'
-              : color === 'text-primary-600'
-                ? 'bg-primary-100'
-                : 'bg-violet-100',
-        )}
-      >
-        <Icon
-          className={clsx(
-            'w-5 h-5',
-            color === 'text-green-600'
-              ? 'text-green-600'
-              : color === 'text-red-600'
-                ? 'text-red-600'
-                : color === 'text-primary-600'
-                  ? 'text-primary-600'
-                  : 'text-violet-600',
-          )}
-        />
-      </div>
-    </div>
-  </div>
-)
+const MONTH_NAMES = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+];
 
-const CustomTooltip = ({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean
-  payload?: Array<{ value: number; name: string; color: string }>
-  label?: string
-}) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="bg-white border border-gray-200 rounded-xl shadow-lg p-3">
-        <p className="text-xs font-semibold text-gray-600 mb-2">{label}</p>
-        {payload.map((entry, index) => (
-          <p key={index} className="text-xs" style={{ color: entry.color }}>
-            {entry.name}: {formatCurrency(entry.value)}
-          </p>
-        ))}
-      </div>
-    )
-  }
-  return null
-}
+export function Dashboard() {
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [loading, setLoading] = useState(true);
 
-const Dashboard = () => {
-  const now = new Date()
-  const [month, setMonth] = useState(now.getMonth() + 1)
-  const [year, setYear] = useState(now.getFullYear())
+  useEffect(() => {
+    setLoading(true);
+    api
+      .get('/dashboard/summary', { params: { month, year } })
+      .then(({ data }) => setSummary(data))
+      .finally(() => setLoading(false));
+  }, [month, year]);
 
-  const { data, loading, error } = useDashboard(month, year)
-
-  const prevMonth = () => {
-    if (month === 1) {
-      setMonth(12)
-      setYear((y) => y - 1)
-    } else {
-      setMonth((m) => m - 1)
+  function changeMonth(delta: number) {
+    let newMonth = month + delta;
+    let newYear = year;
+    if (newMonth > 12) {
+      newMonth = 1;
+      newYear += 1;
+    } else if (newMonth < 1) {
+      newMonth = 12;
+      newYear -= 1;
     }
+    setMonth(newMonth);
+    setYear(newYear);
   }
 
-  const nextMonth = () => {
-    if (month === 12) {
-      setMonth(1)
-      setYear((y) => y + 1)
-    } else {
-      setMonth((m) => m + 1)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-red-500">{error}</p>
-      </div>
-    )
-  }
-
-  const chartData = (data?.monthlyData ?? []).map((d) => ({
-    name: d.month,
-    Receitas: d.income,
-    Despesas: d.expense,
-  }))
-
-  const pieData = (data?.expensesByCategory ?? []).map((c) => ({
-    name: c.categoryName,
-    value: c.total,
-    color: c.color,
-  }))
+  const netBalance = useMemo(() => {
+    if (!summary) return 0;
+    return summary.totalIncome - summary.totalExpense;
+  }, [summary]);
 
   return (
     <div className="space-y-6">
-      {/* Month Selector */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 bg-white rounded-xl border border-gray-200 p-1">
-          <button
-            onClick={prevMonth}
-            className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-          >
-            <ChevronLeft className="w-4 h-4" />
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+          <p className="text-slate-500 text-sm mt-0.5">Visão geral das suas finanças</p>
+        </div>
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-2 py-1.5 shadow-sm self-start">
+          <button onClick={() => changeMonth(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
+            <ChevronLeft size={18} />
           </button>
-          <span className="text-sm font-semibold text-gray-900 min-w-[140px] text-center">
-            {monthNames[month - 1]} {year}
+          <span className="text-sm font-medium text-slate-700 w-32 text-center">
+            {MONTH_NAMES[month - 1]} {year}
           </span>
-          <button
-            onClick={nextMonth}
-            className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-          >
-            <ChevronRight className="w-4 h-4" />
+          <button onClick={() => changeMonth(1)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
+            <ChevronRight size={18} />
           </button>
         </div>
       </div>
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard
-          title="Receitas do Mês"
-          value={data?.totalIncome ?? 0}
-          icon={TrendingUp}
-          color="text-green-600"
-          subtitle={`${monthNames[month - 1]} ${year}`}
-        />
-        <StatCard
-          title="Despesas do Mês"
-          value={data?.totalExpense ?? 0}
-          icon={TrendingDown}
-          color="text-red-600"
-          subtitle={`${monthNames[month - 1]} ${year}`}
-        />
-        <StatCard
-          title="Saldo Mensal"
-          value={data?.monthlyBalance ?? 0}
-          icon={DollarSign}
-          color="text-primary-600"
-          subtitle="Receitas - Despesas"
-        />
-        <StatCard
-          title="Saldo Total"
-          value={data?.totalBalance ?? 0}
-          icon={Wallet}
-          color="text-violet-600"
-          subtitle="Todas as contas"
-        />
-      </div>
-
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Bar Chart */}
-        <div className="card lg:col-span-2">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">
-            Receitas x Despesas (6 meses)
-          </h2>
-          {chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={chartData} barGap={4}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 11, fill: '#94a3b8' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 11, fill: '#94a3b8' }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`}
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="Receitas" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={32} />
-                <Bar dataKey="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={32} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-60 flex items-center justify-center text-gray-400 text-sm">
-              Nenhum dado disponível
-            </div>
-          )}
+      {loading || !summary ? (
+        <div className="flex justify-center py-24">
+          <div className="h-8 w-8 rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin" />
         </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <StatCard label="Saldo total" value={summary.totalBalance} icon={Wallet} tone="brand" />
+            <StatCard label="Receitas do mês" value={summary.totalIncome} icon={TrendingUp} tone="emerald" />
+            <StatCard label="Despesas do mês" value={summary.totalExpense} icon={TrendingDown} tone="red" />
+          </div>
 
-        {/* Pie Chart */}
-        <div className="card">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Despesas por Categoria</h2>
-          {pieData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="45%"
-                  innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={2}
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={index} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(value: number) => formatCurrency(value)}
-                  contentStyle={{
-                    borderRadius: '12px',
-                    border: '1px solid #e2e8f0',
-                    fontSize: '12px',
-                  }}
-                />
-                <Legend
-                  iconType="circle"
-                  iconSize={8}
-                  formatter={(value) => (
-                    <span style={{ fontSize: '11px', color: '#64748b' }}>{value}</span>
-                  )}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-60 flex items-center justify-center text-gray-400 text-sm">
-              Nenhuma despesa neste mês
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Bottom Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Transactions */}
-        <div className="card">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Transações Recentes</h2>
-          {(data?.recentTransactions ?? []).length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-6">
-              Nenhuma transação encontrada
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {(data?.recentTransactions ?? []).slice(0, 5).map((tx) => (
-                <div key={tx.id} className="flex items-center gap-3">
-                  <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                    style={{ backgroundColor: `${tx.category?.color}20` }}
-                  >
-                    <span className="text-sm">{tx.category?.icon || '💰'}</span>
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+            <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+              <h2 className="font-semibold text-slate-900 mb-4">Despesas por categoria</h2>
+              {summary.expensesByCategory.length === 0 ? (
+                <EmptyState message="Nenhuma despesa neste mês" />
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie
+                        data={summary.expensesByCategory}
+                        dataKey="total"
+                        nameKey="name"
+                        innerRadius={55}
+                        outerRadius={85}
+                        paddingAngle={2}
+                      >
+                        {summary.expensesByCategory.map((entry) => (
+                          <Cell key={entry.categoryId} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-2 mt-2 max-h-40 overflow-y-auto">
+                    {summary.expensesByCategory.map((cat) => (
+                      <div key={cat.categoryId} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                          <span className="text-slate-600 truncate">{cat.name}</span>
+                        </div>
+                        <span className="font-medium text-slate-900 shrink-0">{formatCurrency(cat.total)}</span>
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">{tx.description}</p>
-                    <p className="text-xs text-gray-400">{tx.category?.name}</p>
-                  </div>
-                  <span
-                    className={clsx(
-                      'text-sm font-semibold flex-shrink-0',
-                      tx.type === TransactionType.INCOME ? 'text-green-600' : 'text-red-600',
-                    )}
-                  >
-                    {tx.type === TransactionType.INCOME ? '+' : '-'}
-                    {formatCurrency(tx.amount)}
-                  </span>
-                </div>
-              ))}
+                </>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Budget Progress */}
-        <div className="card">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Orçamentos</h2>
-          {(data?.budgets ?? []).length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-6">
-              Nenhum orçamento configurado
-            </p>
-          ) : (
-            <div className="space-y-4">
-              {(data?.budgets ?? []).slice(0, 5).map((budget) => {
-                const percentage = budget.amount > 0
-                  ? Math.min((budget.spent / budget.amount) * 100, 100)
-                  : 0
-                return (
-                  <div key={budget.id}>
-                    <div className="flex justify-between text-xs mb-1.5">
-                      <span className="font-medium text-gray-700">{budget.category?.name}</span>
-                      <span className={getProgressTextColor(percentage)}>
-                        {formatCurrency(budget.spent)} / {formatCurrency(budget.amount)}
+            <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+              <h2 className="font-semibold text-slate-900 mb-4">Evolução mensal</h2>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={summary.monthlyEvolution}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} tickFormatter={(v) => v.replace('.', '')} />
+                  <YAxis tickLine={false} axisLine={false} fontSize={12} tickFormatter={(v) => `${v / 1000}k`} />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Legend />
+                  <Bar dataKey="income" name="Receitas" fill="#22c55e" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="expense" name="Despesas" fill="#ef4444" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h2 className="font-semibold text-slate-900">Últimas transações</h2>
+              <span
+                className={`text-sm font-medium ${netBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}
+              >
+                {netBalance >= 0 ? '+' : ''}
+                {formatCurrency(netBalance)} no mês
+              </span>
+            </div>
+            {summary.recentTransactions.length === 0 ? (
+              <div className="p-5">
+                <EmptyState message="Nenhuma transação registrada ainda" />
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {summary.recentTransactions.map((tx) => {
+                  const Icon = getIcon(tx.category.icon);
+                  return (
+                    <div key={tx.id} className="flex items-center gap-3 px-5 py-3">
+                      <div
+                        className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: `${tx.category.color}20`, color: tx.category.color }}
+                      >
+                        <Icon size={18} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-900 truncate">{tx.description}</p>
+                        <p className="text-xs text-slate-500">
+                          {tx.category.name} · {tx.account.name} · {formatDate(tx.date)}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-sm font-semibold shrink-0 ${
+                          tx.type === 'INCOME' ? 'text-emerald-600' : 'text-red-600'
+                        }`}
+                      >
+                        {tx.type === 'INCOME' ? '+' : '-'}
+                        {formatCurrency(tx.amount)}
                       </span>
                     </div>
-                    <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className={clsx(
-                          'h-full rounded-full transition-all duration-500',
-                          getProgressColor(percentage),
-                        )}
-                        style={{ width: `${percentage}%` }}
-                      />
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {percentage.toFixed(0)}% utilizado
-                    </p>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
-  )
+  );
 }
 
-export default Dashboard
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-10 text-center">
+      <Receipt className="text-slate-300 mb-2" size={32} />
+      <p className="text-sm text-slate-400">{message}</p>
+    </div>
+  );
+}
